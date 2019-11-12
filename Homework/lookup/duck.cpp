@@ -12,7 +12,7 @@ static uint32_t rev_bytes(const uint32_t &val) {
 struct RouterTable {
     struct node_t {
         node_t *ch[2];
-        uint32_t nexthop, if_index;
+        uint32_t nexthop;
         bool val;
 
         node_t() {
@@ -33,30 +33,13 @@ struct RouterTable {
         }
         u->val = 1;
         u->nexthop = entry.nexthop;
-        u->if_index = entry.if_index;
-    }
-
-    void remove(const RoutingTableEntry &entry) {
-        remove(root, 0, rev_bytes(entry.addr), entry.len);
-    }
-
-    void remove(node_t *&u, int i, uint32_t addr, uint32_t len) {
-        if (!u) return;
-        if (i == len)
-            u->val = 0;
-        else
-            remove(u->ch[addr >> (31 - i) & 1], i + 1, addr, len);
-        if (!u->ch[0] && !u->ch[1] && !u->val) {
-            delete u;
-            u = nullptr;
-        }
     }
 
     const node_t *query(uint32_t addr) {
         addr = rev_bytes(addr);
         if (!root) return nullptr;
+        const node_t *ret = root->val ? root : nullptr;
         auto u = root;
-        const node_t *ret = nullptr;
         for (int i = 31; i >= 0; i--) {
             u = u->ch[addr >> i & 1];
             if (!u) break;
@@ -67,19 +50,11 @@ struct RouterTable {
 };
 static RouterTable table;
 
-void update(bool insert, RoutingTableEntry entry) {
-    if (insert)
-        table.insert(entry);
-    else
-        table.remove(entry);
+void init(int n, int q, const RoutingTableEntry *a) {
+	for (int i = 0; i < n; i++) table.insert(a[i]);
 }
 
-bool query(uint32_t addr, uint32_t *nexthop, uint32_t *if_index) {
-    auto node = table.query(addr);
-    if (node) {
-        *nexthop = node->nexthop;
-        *if_index = node->if_index;
-        return true;
-    } else
-        return false;
+unsigned query(unsigned addr) {
+	auto node = table.query(addr);
+    return node ? node->nexthop : 0u;
 }
