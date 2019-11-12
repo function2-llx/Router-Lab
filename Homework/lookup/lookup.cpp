@@ -1,45 +1,81 @@
-#include "router.h"
 #include <stdint.h>
-#include <stdlib.h>
+#include <cstdlib>
+#include <utility>
+#include <iostream>
+#include "router.h"
 
-/*
-  RoutingTable Entry 的定义如下：
-  typedef struct {
-    uint32_t addr; // 大端序，IPv4 地址
-    uint32_t len; // 小端序，前缀长度
-    uint32_t if_index; // 小端序，出端口编号
-    uint32_t nexthop; // 大端序，下一跳的 IPv4 地址
-  } RoutingTableEntry;
+struct Trie {
+    struct node_t {
+        node_t *ch[2];
+        RoutingTableEntry *entry;
 
-  约定 addr 和 nexthop 以 **大端序** 存储。
-  这意味着 1.2.3.4 对应 0x04030201 而不是 0x01020304。
-  保证 addr 仅最低 len 位可能出现非零。
-  当 nexthop 为零时这是一条直连路由。
-  你可以在全局变量中把路由表以一定的数据结构格式保存下来。
-*/
+        node_t() {
+            ch[0] = ch[1] = nullptr;
+            entry = nullptr;
+        }
+    };
+    node_t *root = nullptr;
 
-/**
- * @brief 插入/删除一条路由表表项
- * @param insert 如果要插入则为 true ，要删除则为 false
- * @param entry 要插入/删除的表项
- * 
- * 插入时如果已经存在一条 addr 和 len 都相同的表项，则替换掉原有的。
- * 删除时按照 addr 和 len 匹配。
- */
+    void insert(RoutingTableEntry &&entry) {
+        if (!root) root = new node_t;
+        auto u = root;
+        for (int i = 0; i < entry.len; i++) {
+            auto &v = u->ch[entry.addr >> i & 1];
+            if (!v) v = new node_t;
+            u = v;
+        }
+        delete u->entry;
+        u->entry = new RoutingTableEntry(entry);
+    }
+
+    void remove(const RoutingTableEntry &entry) {
+        remove(root, 0, entry.addr, entry.len);
+    }
+
+    void remove(node_t *&u, int i, uint32_t addr, uint32_t len) {
+        if (!u) return;
+        if (i == len) {
+            delete u->entry;
+            u->entry = nullptr;
+        } else {
+            remove(u->ch[addr >> i & 1], i + 1, addr, len);
+        }
+        if (!u->ch[0] && !u->ch[1] && !u->entry) {
+            delete u;
+            u = nullptr;
+        }
+    }
+
+    const RoutingTableEntry *query(uint32_t addr) {
+        if (!root) return nullptr;
+        auto u = root;
+        const RoutingTableEntry *ret = nullptr;
+        for (int i = 0; i < 32; i++) {
+            u = u->ch[addr >> i & 1];
+            if (!u) break;
+            if (u->entry) {
+                ret = u->entry;
+            }
+        }
+        return ret;
+    }
+};
+static Trie trie;
+
 void update(bool insert, RoutingTableEntry entry) {
-  // TODO:
+    if (insert)
+        trie.insert(std::move(entry));
+    else
+        trie.remove(entry);
 }
 
-/**
- * @brief 进行一次路由表的查询，按照最长前缀匹配原则
- * @param addr 需要查询的目标地址，大端序
- * @param nexthop 如果查询到目标，把表项的 nexthop 写入
- * @param if_index 如果查询到目标，把表项的 if_index 写入
- * @return 查到则返回 true ，没查到则返回 false
- */
 bool query(uint32_t addr, uint32_t *nexthop, uint32_t *if_index) {
-  // TODO:
-  *nexthop = 0;
-  *if_index = 0;
-  return false;
+    auto entry = trie.query(addr);
+    if (entry) {
+        *nexthop = entry->nexthop;
+        *if_index = entry->if_index;
+        return true;
+    } else {
+        return false;
+    }
 }

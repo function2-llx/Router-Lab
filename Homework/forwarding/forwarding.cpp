@@ -1,7 +1,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-uint16_t big(uint8_t* val) { return (uint16_t(val[0]) << 8) + val[1]; }
+static uint16_t big(uint8_t* val) { return (uint16_t(val[0]) << 8) + val[1]; }
 
 bool forward(uint8_t *packet, size_t len) {
     uint32_t checksum = 0;
