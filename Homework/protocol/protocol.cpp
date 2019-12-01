@@ -8,6 +8,32 @@ uint16_t rev16(const uint8_t *val) { return (uint16_t(val[0]) << 8) + val[1]; }
 uint16_t get16(const uint8_t *val) { return ntohs(rev16(val)); }
 uint32_t rev32(const uint8_t *val) { return (uint32_t(val[0]) << 24) + (uint32_t(val[1]) << 16) + (uint32_t(val[2]) << 8) + val[3]; }
 uint32_t get32(const uint8_t *val) { return ntohl(rev32(val)); }
+/*
+  在头文件 rip.h 中定义了如下的结构体：
+  #define RIP_MAX_ENTRY 25
+  typedef struct {
+    // all fields are big endian
+    // we don't store 'family', as it is always 2(for response) and 0(for request)
+    // we don't store 'tag', as it is always 0
+    uint32_t addr;
+    uint32_t mask;
+    uint32_t nexthop;
+    uint32_t metric;
+  } RipEntry;
+
+  typedef struct {
+    uint32_t numEntries;
+    // all fields below are big endian
+    uint8_t command; // 1 for request, 2 for response, otherwsie invalid
+    // we don't store 'version', as it is always 2
+    // we don't store 'zero', as it is always 0
+    RipEntry entries[RIP_MAX_ENTRY];
+  } RipPacket;
+
+  你需要从 IPv4 包中解析出 RipPacket 结构体，也要从 RipPacket 结构体构造出对应的 IP 包
+  由于 Rip 包结构本身不记录表项的个数，需要从 IP 头的长度中推断，所以在 RipPacket 中额外记录了个数。
+  需要注意这里的地址都是用 **大端序** 存储的，1.2.3.4 对应 0x04030201 。
+*/
 
 /**
  * @brief 从接受到的 IP 包解析出 Rip 协议的数据
@@ -19,7 +45,7 @@ uint32_t get32(const uint8_t *val) { return ntohl(rev32(val)); }
  * IP 包的 Total Length 长度可能和 len 不同，当 Total Length 大于 len 时，把传入的 IP 包视为不合法。
  * 你不需要校验 IP 头和 UDP 的校验和是否合法。
  * 你需要检查 Command 是否为 1 或 2，Version 是否为 2， Zero 是否为 0，
- * Family 和 Command 是否有正确的对应关系，Tag 是否为 0，
+ * Family 和 Command 是否有正确的对应关系（见上面结构体注释），Tag 是否为 0，
  * Metric 转换成小端序后是否在 [1,16] 的区间内，
  * Mask 的二进制是不是连续的 1 与连续的 0 组成等等。
  */
