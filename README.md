@@ -1,6 +1,6 @@
 # Router-Lab
 
-最后更新：2019/11/28 12:30 a.m.
+最后更新：2019/12/07 12:20 a.m.
 
 * [如何使用框架](#如何使用框架)
     * [如何使用 HAL](#如何使用-hal)
@@ -18,6 +18,7 @@
 * [FAQ（暗号：档）](#faq暗号档)
 * [附录：ip 命令的使用](#附录ip-命令的使用)
 * [附录：树莓派系统的配置和使用](#附录树莓派系统的配置和使用)
+* [附录： make 命令的使用和 Makefile 的编写](#附录-make-命令的使用和-makefile-的编写)
 * [名词解释](#名词解释)
 * [项目作者](#项目作者)
 
@@ -247,7 +248,7 @@ R3:
 1. 开启 R1 R3 上的 BIRD 和 R2 上运行的路由器实现
 2. 使用 ping 进行了若干次连通性测试
 
-注意，这个例子中，路由器只实现了 split horizon，没有实现 reverse poisoning，你的实现不需要和它完全一样。
+注意，这个例子中，路由器只实现了 split horizon，没有实现 reverse poisoning，你的实现不需要和它完全一样。实现方法见 [RFC2452 3.4.3 Split horizon 第一段](https://tools.ietf.org/html/rfc2453#page-15)。
 
 举个例子，从 PC1 到 PC2 进行 ping 连通性测试的网络活动（忽略 RIP）：
 
@@ -316,7 +317,8 @@ int main() {
         uint64_t time = HAL_GetTicks();
         if (time > last_time + 30 * 1000) {
             // 每 30s 做什么
-            // 例如：超时？发 RIP Request？
+            // 例如：超时？发 RIP Request/Response？
+            last_time = time;
         }
 
         // 轮询
@@ -356,7 +358,7 @@ int main() {
 }
 ```
 
-你可以直接基于 `Homework/boilerplate` 下的代码，把上面的代码实现完全。
+你可以直接基于 `Homework/boilerplate` 下的代码，把上面的代码实现完全。代码中在发送 RIP 包的时候，会涉及到 IP 头的构造，由于不需要用各种高级特性，可以这么设定：V=4，IHL=5，TOS(DSCP/ECN)=0，ID=0，FLAGS/OFF=0，TTL=1，其余按照要求实现即可。
 
 ### 如何启动并配置一个比较标准的 RIP 实现
 
@@ -405,7 +407,7 @@ protocol rip {
 
 启动服务（如 `systemctl start bird`）后，你就可以开始抓包，同时查看 bird 打出的信息（`journalctl -f -u bird`），这对调试你的路由器实现很有帮助。
 
-你也可以直接运行 BIRD（`bird -c /etc/bird.conf`），可在命令选项中加上 `-d` 方便直接退出进程。若想同时开多个 BIRD，则需要给每个进程指定单独的 socket。
+你也可以直接运行 BIRD（`bird -c /etc/bird.conf`），可在命令选项中加上 `-d` 把程序放到前台，方便直接退出进程。若想同时开多个 BIRD，则需要给每个进程指定单独的 PID 文件和 socket，如 `bird -d -c bird1.conf -P bird1.pid -s bird1.socket` 。
 
 ### 如何在一台计算机上进行真实测试
 
@@ -441,7 +443,7 @@ A：总是有同学不认真阅读文档，所以，如果你阅读到了这里�
 
 Q：我用的是纯命令行环境，没有 Wireshark 图形界面可以用，咋办？
 
-A：你可以用 tcpdump 代替 Wireshark，它的特点是一次性输出所有内容；或者用 tshark，是 Wireshark 官方的 CLI 版本；也可以用 termshark ，它是 Wireshark 的 TUI 版，操作方式和 Wireshark 是一致的
+A：你可以用 tcpdump 代替 Wireshark，它的特点是一次性输出所有内容；或者用 tshark，是 Wireshark 官方的 CLI 版本；也可以用 termshark ，它是 Wireshark 的 TUI 版，操作方式和 Wireshark 是一致的。比较常用的 tshark 用法是 `sudo tshark -i [interface_name] -V -l [filter]` ，其中 `interface_name` 是网卡名字，如 `eth0` ，`-V` 表示打印出解析树， `-l` 表示关闭输出缓冲， `[filter]` 表示过滤，常见的有 `arp` `ip` `icmp` 等等。
 
 Q: 运行 `grade.py` 的时候，提示找不到 tshark ，怎么办？
 
@@ -477,7 +479,7 @@ A: 实验所使用的大部分工具相信同学们在若干先前已经修过�
 
 Q: 我听说过转发表这个概念，它和路由表是什么关系？
 
-A: 实际上这两个是不一样的，路由协议操作路由表，转发操作查询转发表，转发表从路由表中来。但软件实现的路由器其实可以不对二者进行区分，所以在文档里统称为路由表。
+A: 实际上这两个是不一样的，路由协议操作路由表，转发操作查询转发表，转发表从路由表中来。但软件实现的路由器其实可以不对二者进行区分，所以在文档里统称为路由表。在 router.h 里的 RoutingTableEntry 只有转发需要的内容，但为了支持 RIP 协议，你还需要额外添加一些字段，如 metric 等等。
 
 Q: 树莓派和计算机组成原理用的板子有什么区别？
 
@@ -486,6 +488,14 @@ A: 树莓派就是一个小型的计算机，只不过指令集是 ARM ，其余
 Q: 我在树莓派写的可以工作的代码，放到我的 x86 电脑上跑怎么就不工作了呢？或者反过来，我在 x86 电脑上写的可以工作的代码，放到树莓派上怎么就不工作了呢？
 
 A: 一个可能的原因是代码出现了 Undefined Behavior ，编译器在不同架构下编译出不同的代码，导致行为不一致。可以用 UBSan 来发现这种问题。
+
+Q: 我用 ssh 连不上树莓派，有什么办法可以进行诊断吗？
+
+A: 可以拿 HDMI 线把树莓派接到显示器上，然后插上 USB 的键盘和鼠标，登录进去用 `ip` 命令看它的网络情况。网络连接方面，可以用网线连到自己的电脑或者宿舍路由器上，也可以连接到 Wi-Fi 。如果没有显示器，也可以用 USB 转串口，把串口接到树莓派对应的引脚上。
+
+Q: 我在 macOS 上安装了 Wireshark，但是报错找不到 tshark ？
+
+A: tshark 可能被安装到了 /Applications/Wireshark.app/Contents/MacOS/tshark 路径下，如果存在这个文件，把目录放到 PATH 环境变量里就可以了。
 
 ## 附录：`ip` 命令的使用 
 
@@ -718,6 +728,45 @@ Timer
 Timer
 Timer
 ```
+
+## 附录： make 命令的使用和 Makefile 的编写
+
+`make` 命令的功能就是按照 Makefile 中编写的规则来生成一些文件，这些文件之间会有依赖的关系，`make` 会安装依赖关系增量地进行生成，达到编译一个完整的程序的目的。下面以 `Homework/boilerplate/Makefile` 举例说明：
+
+```makefile
+CXX ?= g++
+LAB_ROOT ?= ../..
+BACKEND ?= LINUX
+CXXFLAGS ?= --std=c++11 -I $(LAB_ROOT)/HAL/include -DROUTER_BACKEND_$(BACKEND)
+LDFLAGS ?= -lpcap
+```
+
+这一部分定义了若干个变量，左边是 key ，右边是 value ，`$(LAB_ROOT)` 表示变量 `LAB_ROOT` 的内容。条件赋值 `?=` 表示的是只有在第一次赋值时才生效，可以通过 `make CXX=clang++` 来让 CXX 变量的内容变成 clang++。
+
+```makefile
+.PHONY: all clean
+all: boilerplate
+
+clean:
+	rm -f *.o boilerplate std
+
+%.o: %.cpp
+	$(CXX) $(CXXFLAGS) -c $^ -o $@
+
+hal.o: $(LAB_ROOT)/HAL/src/linux/router_hal.cpp
+	$(CXX) $(CXXFLAGS) -c $^ -o $@
+
+boilerplate: main.o hal.o protocol.o checksum.o lookup.o forwarding.o
+	$(CXX) $^ -o $@ $(LDFLAGS) 
+```
+
+这里出现了一个格式： `xxx: aaa bbb ccc` ，它代表如果要生成 `xxx` ，首先要生成 `aaa` `bbb` 和 `ccc` ，代表了依赖关系，只有 `aaa` `bbb` `ccc` 都生成了，才会生成 `xxx`，另一方面，如果 `xxx` 的更新时间比 `aaa` `bbb` `ccc` 都新，那么就不会重新生成 `xxx` 。紧接着这一行的就是生成的具体过程。
+
+在这里， `.PHONY: all clean` 是特殊的，代表右侧的目标并不是真正的文件，如果没有这一行，并且当前目录有一个名为 `all` 的文件，那么它就不会执行 `all` 内部的命令；加上这一行以后，即使有名为 `all` 的文件，也会尝试去构建。
+
+Make 通过 `%.o` 的格式来支持 wildcard，如 `%.o: %.cpp` 就可以针对所有的 .cpp 文件构建对应的 .o 文件。在命令中，用 `$^` 代表所有依赖， `$@` 代表目标文件， `$<` 代表第一个依赖，如在 `xxx: aaa bbb ccc` 中，`$^` 代表 `aaa bbb ccc` ，`$@` 代表 `xxx` ，`$<` 代表 `aaa`。
+
+以上就涵盖了本实验中 Makefile 用到的所有语法。使用的时候只需要 `make` 就可以了。
 
 ## 名词解释
 
