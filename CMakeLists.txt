@@ -20,3 +20,4 @@ add_definitions("-DROUTER_BACKEND_${BACKEND}")
 
 add_subdirectory(HAL)
 add_subdirectory(Example)
+add_subdirectory(Homework/boilerplate)

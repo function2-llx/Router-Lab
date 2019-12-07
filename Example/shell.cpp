@@ -40,7 +40,7 @@ int main() {
   while ((buffer = readline("> "))) {
     add_history(buffer);
     if (strcmp(buffer, "time") == 0) {
-      printf("Current tick %lld\n", HAL_GetTicks());
+      printf("Current tick %lu\n", HAL_GetTicks());
     } else if (strncmp(buffer, "arp", strlen("arp")) == 0) {
       int if_index;
       int ip1, ip2, ip3, ip4;
