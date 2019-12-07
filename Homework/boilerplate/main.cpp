@@ -66,6 +66,14 @@ extern bool disassemble(const uint8_t *packet, uint32_t len, RipPacket *output);
  */
 extern uint32_t assemble(const RipPacket *rip, uint8_t *buffer);
 
+// 通过计算得到 checksum
+extern uint16_t get_header_checksum(uint8_t *packet);
+
+static uint16_t rev16(const uint8_t *val) { return (uint16_t(val[0]) << 8) + val[1]; }
+static uint16_t get16(const uint8_t *val) { return ntohs(rev16(val)); }
+static uint32_t rev32(const uint8_t *val) { return (uint32_t(val[0]) << 24) + (uint32_t(val[1]) << 16) + (uint32_t(val[2]) << 8) + val[3]; }
+static uint32_t get32(const uint8_t *val) { return ntohl(rev32(val)); }
+
 static uint8_t packet[2048];
 static uint8_t output[2048];
 // 0: 10.0.0.1
@@ -77,7 +85,7 @@ static in_addr_t addrs[N_IFACE_ON_BOARD] = {0x0100000a, 0x0101000a, 0x0102000a,
                                     0x0103000a};
 
 // 224.0.0.9
-static constexpr uint32_t RIP_MULTI_ADDR = 0xe0000009;
+static constexpr uint32_t RIP_MULTI_ADDR = 0x090000e0;
 
 int main(int argc, char *argv[]) {
     // 0a.
@@ -110,7 +118,7 @@ int main(int argc, char *argv[]) {
             // TODO: send complete routing table to every interface
             // ref. RFC2453 3.8
             for (int i = 0; i < N_IFACE_ON_BOARD; i++) {
-                HAL_SendIPPacket(HAL_ArpGetMacAddress())
+                
             }
             printf("30s Timer\n");
             last_time = time;
@@ -140,8 +148,8 @@ int main(int argc, char *argv[]) {
         }
         in_addr_t src_addr, dst_addr;
         // TODO: extract src_addr and dst_addr from packet
-        src_addr = *(uint32_t*)(packet + 96);
-        dst_addr = *(uint32_t*)(packet + 128);
+        src_addr = *(uint32_t*)(packet + 12);
+        dst_addr = *(uint32_t*)(packet + 16);
         // big endian
 
         // 2. check whether dst is me
@@ -164,6 +172,7 @@ int main(int argc, char *argv[]) {
                     // only need to respond to whole table requests in the lab
                     RipPacket resp;
                     // TODO: fill resp
+                    memcpy(output, packet, sizeof(packet));
                     // assemble
                     // IP
                     output[0] = 0x45;
@@ -172,9 +181,14 @@ int main(int argc, char *argv[]) {
                     // port = 520
                     output[20] = 0x02;
                     output[21] = 0x08;
+                    memcpy(output + 22, packet + 20, 2);    // 发回原来的 port？
+                    *(uint32_t*)(output + 24) = 8;  // udp length = 8，顺便把 checksum 设为 0
                     // ...
                     // RIP
+                    rip.command = 2;    // response
                     uint32_t rip_len = assemble(&rip, &output[20 + 8]);
+                    *(uint16_t*)(packet + 2) = 20 + 8 + rip_len;    // ip total length
+                    *(uint16_t*)(packet + 10) = get_header_checksum(packet);    // new header checksum
                     // checksum calculation for ip and udp
                     // if you don't want to calculate udp checksum, set it to zero
                     // send it back
@@ -196,18 +210,19 @@ int main(int argc, char *argv[]) {
             uint32_t nexthop, dest_if;
             if (query(dst_addr, &nexthop, &dest_if)) {
                 // found
-                macaddr_t dest_mac;
                 // direct routing
                 if (nexthop == 0) {
                     nexthop = dst_addr;
                 }
+                macaddr_t dest_mac;
                 if (HAL_ArpGetMacAddress(dest_if, nexthop, dest_mac) == 0) {
                     // found
                     memcpy(output, packet, res);
                     // update ttl and checksum
                     forward(output, res);
                     // TODO: you might want to check ttl=0 case
-                    HAL_SendIPPacket(dest_if, output, res, dest_mac);
+                    uint8_t ttl = output[8];
+                    if (ttl) HAL_SendIPPacket(dest_if, output, res, dest_mac);
                 } else {
                     // not found
                     // you can drop it

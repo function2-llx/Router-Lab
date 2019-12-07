@@ -4,10 +4,10 @@
 #include <cassert>
 #include <arpa/inet.h>
 
-uint16_t rev16(const uint8_t *val) { return (uint16_t(val[0]) << 8) + val[1]; }
-uint16_t get16(const uint8_t *val) { return ntohs(rev16(val)); }
-uint32_t rev32(const uint8_t *val) { return (uint32_t(val[0]) << 24) + (uint32_t(val[1]) << 16) + (uint32_t(val[2]) << 8) + val[3]; }
-uint32_t get32(const uint8_t *val) { return ntohl(rev32(val)); }
+static uint16_t rev16(const uint8_t *val) { return (uint16_t(val[0]) << 8) + val[1]; }
+static uint16_t get16(const uint8_t *val) { return ntohs(rev16(val)); }
+static uint32_t rev32(const uint8_t *val) { return (uint32_t(val[0]) << 24) + (uint32_t(val[1]) << 16) + (uint32_t(val[2]) << 8) + val[3]; }
+static uint32_t get32(const uint8_t *val) { return ntohl(rev32(val)); }
 /*
   在头文件 rip.h 中定义了如下的结构体：
   #define RIP_MAX_ENTRY 25

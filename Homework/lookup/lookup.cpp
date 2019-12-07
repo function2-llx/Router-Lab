@@ -2,6 +2,8 @@
 #include <cstdlib>
 #include <iostream>
 #include <utility>
+#include <vector>
+
 #include "router.h"
 
 static uint32_t rev_bytes(const uint32_t &val) {
@@ -52,7 +54,7 @@ struct RouterTable {
         }
     }
 
-    const node_t *query(uint32_t addr) {
+    const node_t *query(uint32_t addr) const {
         addr = rev_bytes(addr);
         if (!root) return nullptr;
         auto u = root;
@@ -62,6 +64,19 @@ struct RouterTable {
             if (!u) break;
             if (u->val) ret = u;
         }
+        return ret;
+    }
+
+    void dfs(const node_t* x, uint32_t addr, uint32_t len, std::vector<RoutingTableEntry>& result) const {
+        if (!x) return;
+        if (x->val) result.push_back(RoutingTableEntry{rev_bytes(addr << (32 - len)), len, x->if_index, x->nexthop});
+        dfs(x->ch[0], addr << 1, len + 1, result);
+        dfs(x->ch[1], addr << 1 | 1, len + 1, result);
+    }
+    
+    std::vector<RoutingTableEntry> get_all() {
+        std::vector<RoutingTableEntry> ret;
+        dfs(root, 0, 0, ret);
         return ret;
     }
 };
