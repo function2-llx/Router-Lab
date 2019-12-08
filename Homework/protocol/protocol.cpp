@@ -8,6 +8,8 @@ static uint16_t rev16(const uint8_t *val) { return (uint16_t(val[0]) << 8) + val
 static uint16_t get16(const uint8_t *val) { return ntohs(rev16(val)); }
 static uint32_t rev32(const uint8_t *val) { return (uint32_t(val[0]) << 24) + (uint32_t(val[1]) << 16) + (uint32_t(val[2]) << 8) + val[3]; }
 static uint32_t get32(const uint8_t *val) { return ntohl(rev32(val)); }
+static constexpr uint16_t RIP_PORT = 0x0802;    // 520
+
 /*
   在头文件 rip.h 中定义了如下的结构体：
   #define RIP_MAX_ENTRY 25
@@ -58,8 +60,9 @@ bool disassemble(const uint8_t *packet, uint32_t len, RipPacket *output) {
     len -= IHL * 4;
     packet += IHL * 4;
     uint16_t udp_len = rev16(packet + 4);
-    // cerr << "udp len: " << udp_len << endl;
     if (udp_len < 8) return 0;
+    // 必须来自 rip port
+    if (*(uint16_t*)packet != RIP_PORT) return 0;
     uint16_t rip_len = udp_len - 8;
     packet += 8;
     if (rip_len < 4) return 0;

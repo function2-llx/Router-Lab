@@ -19,7 +19,8 @@ struct RouterTable {
 
         void set(const RoutingTableEntry &entry) { this->entry = new RoutingTableEntry(entry); }
         bool has() const { return entry != nullptr; }
-        RoutingTableEntry get() const { return *entry; }
+        const RoutingTableEntry& get() const { return *entry; }
+        RoutingTableEntry& get() { return *entry; }
         void remove() {
             delete entry;
             entry = nullptr;
@@ -43,16 +44,21 @@ struct RouterTable {
         remove(root, 0, ntohl(entry.addr), entry.len);
     }
 
-    void remove(node_t *&u, int i, uint32_t addr, uint32_t len) {
-        if (!u) return;
-        if (i == len)
-            u->remove();
-        else
-            remove(u->ch[addr >> (31 - i) & 1], i + 1, addr, len);
+    void recycle(node_t *&u) {
         if (!u->ch[0] && !u->ch[1] && !u->has()) {
             delete u;
             u = nullptr;
         }
+    }
+
+    void remove(node_t *&u, int i, uint32_t addr, uint32_t len) {
+        if (!u) return;
+        if (i == len) {
+            u->remove();
+        } else {
+            remove(u->ch[addr >> (31 - i) & 1], i + 1, addr, len);
+        }
+        recycle(u);
     }
 
     const node_t *query(uint32_t addr) const {
@@ -67,17 +73,47 @@ struct RouterTable {
         }
         return ret;
     }
+    const node_t *query(uint32_t addr, uint32_t mask) const {
+        addr = ntohl(addr);
+        mask = ntohl(mask);
+        auto u = root;
+        for (int i = 31; i >= 0 && (mask >> i & 1); i--) {
+            u = u->ch[addr >> i & 1];
+        }
+        return u;
+    }
 
-    void dfs(const node_t* x, uint32_t addr, uint32_t len, std::vector<RoutingTableEntry>& result) const {
+    void dfs_all(node_t* x, std::vector<RoutingTableEntry>& result) {
         if (!x) return;
-        if (x->has()) result.push_back(x->get());
-        dfs(x->ch[0], addr << 1, len + 1, result);
-        dfs(x->ch[1], addr << 1 | 1, len + 1, result);
+        if (x->has()) {
+            auto rte = x->get();
+            result.push_back(rte);
+            rte.flag = false;
+        }
+        dfs_all(x->ch[0], result);
+        dfs_all(x->ch[1], result);
     }
     
     std::vector<RoutingTableEntry> get_all() {
         std::vector<RoutingTableEntry> ret;
-        dfs(root, 0, 0, ret);
+        dfs_all(root, ret);
+        return ret;
+    }
+    
+    void dfs_changed(node_t *&x, std::vector<RoutingTableEntry>& result) {
+        if (!x) return;
+        if (x->has()) {
+            auto &rte = x->get();
+            if (rte.flag) {
+                result.push_back(rte);
+                rte.flag = false;
+            }
+        }
+    }
+
+    std::vector<RoutingTableEntry> get_changed() {
+        std::vector<RoutingTableEntry> ret;
+        dfs_changed(root, ret);
         return ret;
     }
 };
@@ -100,10 +136,11 @@ static RouterTable table;
 */
 
 void update(bool insert, RoutingTableEntry entry) {
-    if (insert)
+    if (insert) {
         table.insert(entry);
-    else
+    } else {
         table.remove(entry);
+    }
 }
 
 bool query(uint32_t addr, uint32_t *nexthop, uint32_t *if_index) {
@@ -117,6 +154,20 @@ bool query(uint32_t addr, uint32_t *nexthop, uint32_t *if_index) {
         return false;
 }
 
-std::vector<RoutingTableEntry> get_table_entries() {
+bool query(uint32_t addr, uint32_t mask, RoutingTableEntry& entry) {
+    auto u = table.query(addr, mask);
+    if (u->has()) {
+        entry = u->get();
+        return 1;
+    } else {
+        return 0;
+    }
+}
+
+std::vector<RoutingTableEntry> get_all_entries() {
     return table.get_all();
+}
+
+std::vector<RoutingTableEntry> get_changed_entries() {
+    return table.get_changed();
 }

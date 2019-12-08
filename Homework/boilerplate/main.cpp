@@ -32,6 +32,7 @@ extern void update(bool insert, RoutingTableEntry entry);
  * @return 查到则返回 true ，没查到则返回 false
  */
 extern bool query(uint32_t addr, uint32_t *nexthop, uint32_t *if_index);
+extern bool query(uint32_t addr, uint32_t mask, RoutingTableEntry& entry);
 /**
  * @brief 进行转发时所需的 IP 头的更新：
  *        你需要先检查 IP 头校验和的正确性，如果不正确，直接返回 false ；
@@ -71,7 +72,8 @@ extern uint32_t assemble(const RipPacket *rip, uint8_t *buffer);
 
 // 通过计算得到 checksum
 extern uint16_t get_header_checksum(uint8_t *packet);
-extern std::vector<RoutingTableEntry> get_table_entries();
+// 返回全部路由表项
+extern std::vector<RoutingTableEntry> get_all_entries();
 
 static uint16_t rev16(const uint8_t *val) { return (uint16_t(val[0]) << 8) + val[1]; }
 static uint16_t get16(const uint8_t *val) { return ntohs(rev16(val)); }
@@ -88,8 +90,55 @@ static uint8_t output[2048];
 static in_addr_t addrs[N_IFACE_ON_BOARD] = {0x0100000a, 0x0101000a, 0x0102000a,
                                     0x0103000a};
 
+#include <assert.h>
+
+// 根据 len 返回大端序的掩码
+static uint32_t get_mask(int len) { return htons(((1 << len) - 1) << (32 - len)); }
+// 根据 mask 返回小端序的 len
+static uint32_t get_len(uint32_t mask) {
+    mask = ntohl(mask);
+    uint32_t len = 0;
+    while (mask >> (31 - len) & 1) len++;
+    return len;
+}
+
 // 224.0.0.9
 static constexpr uint32_t RIP_MULTI_ADDR = 0x090000e0;
+static constexpr uint16_t RIP_PORT = 0x0802;    // 520
+
+// 从 if_index 端口向 dst_addr 发送路由表项
+static void make_response(int if_index, in_addr_t dst_addr, const std::vector<RoutingTableEntry>& entries) {
+    if (entries.empty()) return;
+    macaddr_t dst_mac;
+    if (HAL_ArpGetMacAddress(if_index, dst_addr, dst_mac) == 0) {
+        output[0] = 0x45;       // ip: version, ihl
+        output[8] = 1;          // ip: ttl
+        output[9] = 0x11;       // ip: protocol = udp
+        *(in_addr_t*)(output + 12) = addrs[if_index];   // ip: src addr
+        *(in_addr_t*)(output + 16) = dst_addr;    // ip: dst addr
+        *(uint16_t*)(output + 20) = RIP_PORT;         // udp: src port
+        *(uint16_t*)(output + 22) = RIP_PORT;         // udp: dst port
+        *(uint16_t*)(output + 24) = htons(8);           // udp: length = 8
+        *(uint16_t*)(output + 26) = htons(0);           // udp: checksum = 0
+        for (unsigned i = 0; i < entries.size(); i += RIP_MAX_ENTRY) {
+            RipPacket rip;
+            rip.command = rip_command_t::RESPONSE;
+            rip.numEntries = std::min(size_t(RIP_MAX_ENTRY), entries.size() - i);
+            for (unsigned j = 0; j < rip.numEntries; j++) {
+                auto &rte = entries[i + j];
+                auto &entry = rip.entries[j];
+                entry.addr = rte.addr;
+                entry.metric = rte.metric;
+                entry.mask = get_mask(rte.len);
+                entry.nexthop = rte.nexthop;
+            }
+            auto rip_len = assemble(&rip, output + 20 + 8);
+            *(uint16_t*)(output + 2) = htons(20 + 8 + rip_len); // ip: total length
+            *(uint16_t*)(output + 10) = htons(get_header_checksum(output)); // ip: checksum
+            HAL_SendIPPacket(if_index, output, 20 + 8 + rip_len, dst_mac);
+        }
+    }
+}
 
 int main(int argc, char *argv[]) {
     // 0a.
@@ -109,7 +158,8 @@ int main(int argc, char *argv[]) {
             .addr = addrs[i],  // big endian
             .len = 24,         // small endian
             .if_index = i,     // small endian
-            .nexthop = 0       // big endian, means direct
+            .nexthop = 0,       // big endian, means direct
+            .metric = 1
         };
         update(true, entry);
     }
@@ -121,36 +171,9 @@ int main(int argc, char *argv[]) {
             // What to do? 
             // TODO: send complete routing table to every interface
             // ref. RFC2453 3.8
-            auto entries = get_table_entries();
-            for (int i = 0; i < N_IFACE_ON_BOARD; i++) {
-                macaddr_t dst_mac;
-                if (HAL_ArpGetMacAddress(i, RIP_MULTI_ADDR, dst_mac) == 0) {
-                    for (unsigned j = 0; j < entries.size(); j += RIP_MAX_ENTRY) {
-                        output[0] = 0x45;       // ip: version, ihl
-                        output[8] = 1;          // ip: ttl
-                        output[9] = 0x11;       // ip: protocol = udp
-                        *(in_addr_t*)(output + 12) = addrs[i];          // ip: src addr
-                        *(in_addr_t*)(output + 16) = RIP_MULTI_ADDR;    // ip: dst addr
-                        *(uint16_t*)(output + 20) = htons(520);         // udp: src port = 520
-                        *(uint16_t*)(output + 22) = htons(520);         // udp: dst port = 520
-                        *(uint16_t*)(output + 24) = htons(8);           // udp: length = 8
-                        *(uint16_t*)(output + 26) = htons(0);           // udp: checksum = 0
-                        RipPacket rip;
-                        rip.command = rip_command_t::RESPONSE;
-                        rip.numEntries = std::min(size_t(RIP_MAX_ENTRY), entries.size() - j);
-                        for (unsigned k = 0; k < rip.numEntries; k++) {
-                            auto &rte = entries[j + k];
-                            auto &entry = rip.entries[k];
-                            entry.addr = rte.addr;
-                            entry.metric = rte.metric;
-                            
-                        }
-                        auto rip_len = assemble(&rip, output + 20 + 8);
-                        *(uint16_t*)(output + 2) = htons(20 + 8 + rip_len); // ip: total length
-                        *(uint16_t*)(output + 10) = htons(get_header_checksum(output)); // ip: checksum
-                        // HAL_SendIPPacket(entry.if_index, output, 20 + 8 + rip_len, dst_mac);
-                    }
-                }
+            auto entries = get_all_entries();
+            for (int if_index = 0; if_index < N_IFACE_ON_BOARD; if_index++) {
+                make_response(if_index, RIP_MULTI_ADDR, entries);
             }
             printf("30s Timer\n");
             last_time = time;
@@ -180,9 +203,9 @@ int main(int argc, char *argv[]) {
         }
         in_addr_t src_addr, dst_addr;
         // TODO: extract src_addr and dst_addr from packet
+        // big endian
         src_addr = *(uint32_t*)(packet + 12);
         dst_addr = *(uint32_t*)(packet + 16);
-        // big endian
 
         // 2. check whether dst is me
         bool dst_is_me = false;
@@ -200,35 +223,10 @@ int main(int argc, char *argv[]) {
             RipPacket rip;
             // check and validate
             if (disassemble(packet, res, &rip)) {
-                if (rip.command == 1) {
+                if (rip.command == rip_command_t::REQUEST) {
                     // 3a.3 request, ref. RFC2453 3.9.1
                     // only need to respond to whole table requests in the lab
-                    RipPacket resp;
-                    // TODO: fill resp
-                    memcpy(output, packet, sizeof(packet));
-                    // assemble
-                    // IP
-                    output[0] = 0x45;
-                    output[8]--;    // ttl
-                    // 互换源和目的 ip
-                    std::swap(*(in_addr_t*)(output + 12), *(in_addr_t*)(output + 16));
-                    // ...
-                    // UDP
-                    // port = 520
-                    output[20] = 0x02;
-                    output[21] = 0x08;
-                    memcpy(output + 22, packet + 20, 2);    // 发回原来的 port？
-                    *(uint32_t*)(output + 24) = 8;  // udp length = 8，顺便把 checksum 设为 0
-                    // ...
-                    // RIP
-                    rip.command = 2;    // response
-                    uint32_t rip_len = assemble(&rip, &output[20 + 8]);
-                    *(uint16_t*)(packet + 2) = 20 + 8 + rip_len;    // ip total length
-                    *(uint16_t*)(packet + 10) = get_header_checksum(packet);    // new header checksum
-                    // checksum calculation for ip and udp
-                    // if you don't want to calculate udp checksum, set it to zero
-                    // send it back
-                    HAL_SendIPPacket(if_index, output, rip_len + 20 + 8, src_mac);
+                    make_response(if_index, src_addr, get_all_entries());
                 } else {
                     // 3a.2 response, ref. RFC2453 3.9.2
                     // update routing table
@@ -237,6 +235,32 @@ int main(int argc, char *argv[]) {
                     // what is missing from RoutingTableEntry?
                     // TODO: use query and update
                     // triggered updates? ref. RFC2453 3.10.1
+                    uint32_t nexthop, metric, addr;
+                    for (int i = 0; i < rip.numEntries; i++) {
+                        auto &re = rip.entries[i];
+                        uint32_t new_metric = htonl(std::min(ntohl(re.metric) + 1, 16u));
+                        RoutingTableEntry rte;
+                        if (!query(re.addr, re.mask, rte)) {
+                            // there is no point in adding a route which is unusable
+                            if (new_metric < 16) {
+                                rte.addr = re.addr;
+                                rte.len = get_len(re.mask);
+                                rte.if_index = if_index;
+                                rte.nexthop = src_addr;
+                                rte.metric = new_metric;
+                                rte.flag = true;
+                                update(true, rte);
+                            }
+                        } else {
+                            if (rte.nexthop == src_addr && rte.metric != new_metric || rte.metric > new_metric) {
+                                rte.metric = new_metric;
+                                rte.nexthop = src_addr;
+                                rte.if_index = if_index;
+                                rte.flag = true;
+                                update(true, rte);
+                            }
+                        }
+                    }
                 }
             }
         } else {
@@ -267,6 +291,7 @@ int main(int argc, char *argv[]) {
             } else {
                 // not found
                 // optionally you can send ICMP Host Unreachable
+                // TODO: send request
                 printf("IP not found for %x\n", src_addr);
             }
         }

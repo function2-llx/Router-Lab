@@ -8,4 +8,5 @@ typedef struct {
     uint32_t nexthop; // 下一条的地址，0 表示直连
     // 为了实现 RIP 协议，需要在这里添加额外的字段
     uint32_t metric;
+    bool flag;  // change flag
 } RoutingTableEntry;
