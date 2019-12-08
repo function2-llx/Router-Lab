@@ -74,6 +74,8 @@ extern uint32_t assemble(const RipPacket *rip, uint8_t *buffer);
 extern uint16_t get_header_checksum(uint8_t *packet);
 // 返回全部路由表项
 extern std::vector<RoutingTableEntry> get_all_entries();
+// 返回改变了的路由表项
+extern std::vector<RoutingTableEntry> get_changed_entries();
 
 static uint16_t rev16(const uint8_t *val) { return (uint16_t(val[0]) << 8) + val[1]; }
 static uint16_t get16(const uint8_t *val) { return ntohs(rev16(val)); }
@@ -111,15 +113,15 @@ static void make_response(int if_index, in_addr_t dst_addr, const std::vector<Ro
     if (entries.empty()) return;
     macaddr_t dst_mac;
     if (HAL_ArpGetMacAddress(if_index, dst_addr, dst_mac) == 0) {
-        output[0] = 0x45;       // ip: version, ihl
-        output[8] = 1;          // ip: ttl
-        output[9] = 0x11;       // ip: protocol = udp
-        *(in_addr_t*)(output + 12) = addrs[if_index];   // ip: src addr
-        *(in_addr_t*)(output + 16) = dst_addr;    // ip: dst addr
-        *(uint16_t*)(output + 20) = RIP_PORT;         // udp: src port
-        *(uint16_t*)(output + 22) = RIP_PORT;         // udp: dst port
-        *(uint16_t*)(output + 24) = htons(8);           // udp: length = 8
-        *(uint16_t*)(output + 26) = htons(0);           // udp: checksum = 0
+        output[0] = 0x45;                                   // ip: version, ihl
+        output[8] = 1;                                      // ip: ttl
+        output[9] = 0x11;                                   // ip: protocol = udp
+        *(in_addr_t*)(output + 12) = addrs[if_index];       // ip: src addr
+        *(in_addr_t*)(output + 16) = dst_addr;              // ip: dst addr
+        *(uint16_t*)(output + 20) = RIP_PORT;               // udp: src port
+        *(uint16_t*)(output + 22) = RIP_PORT;               // udp: dst port
+        *(uint16_t*)(output + 24) = htons(8);               // udp: length = 8
+        *(uint16_t*)(output + 26) = htons(0);               // udp: checksum = 0
         for (unsigned i = 0; i < entries.size(); i += RIP_MAX_ENTRY) {
             RipPacket rip;
             rip.command = rip_command_t::RESPONSE;
@@ -140,12 +142,54 @@ static void make_response(int if_index, in_addr_t dst_addr, const std::vector<Ro
     }
 }
 
+// 组播发送路由表
+static void multicast(const std::vector<RoutingTableEntry>& entries) {
+    for (int i = 0; i < N_IFACE_ON_BOARD; i++) {
+        make_response(i, RIP_MULTI_ADDR, entries);
+    }
+}
+
+static void multicast_request() {
+    RipPacket rp;
+    rp.command = rip_command_t::REQUEST;
+    rp.numEntries = 1;
+    rp.entries[0].metric = 16;
+    for (int if_index = 0; if_index < N_IFACE_ON_BOARD; if_index++) {
+        macaddr_t dst_mac;
+        if (HAL_ArpGetMacAddress(if_index, RIP_MULTI_ADDR, dst_mac) == 0) {
+            output[0] = 0x45;                                   // ip: version, ihl
+            output[8] = 1;                                      // ip: ttl
+            output[9] = 0x11;                                   // ip: protocol = udp
+            *(in_addr_t*)(output + 12) = addrs[if_index];       // ip: src addr
+            *(in_addr_t*)(output + 16) = RIP_MULTI_ADDR;              // ip: dst addr
+            *(uint16_t*)(output + 20) = RIP_PORT;               // udp: src port
+            *(uint16_t*)(output + 22) = RIP_PORT;               // udp: dst port
+            *(uint16_t*)(output + 24) = htons(8);               // udp: length = 8
+            *(uint16_t*)(output + 26) = htons(0);               // udp: checksum = 0
+            auto rip_len = assemble(&rp, output + 20 + 8);
+            *(uint16_t*)(output + 2) = htons(20 + 8 + rip_len);                 // ip: total length
+            *(uint16_t*)(output + 10) = htons(get_header_checksum(output));     // ip: checksum
+            HAL_SendIPPacket(if_index, output, 20 + 8 + rip_len, dst_mac);
+        }
+    }
+}
+
+#include <random>
+
+std::mt19937 rng(time(0));
+
+
+
+
 int main(int argc, char *argv[]) {
     // 0a.
     int res = HAL_Init(1, addrs);
     if (res < 0) {
         return res;
     }
+
+    bool triggered = 0;
+    uint64_t triggered_last = 0, triggered_timer = 0;
 
     // 0b. Add direct routes
     // For example:
@@ -171,12 +215,20 @@ int main(int argc, char *argv[]) {
             // What to do? 
             // TODO: send complete routing table to every interface
             // ref. RFC2453 3.8
-            auto entries = get_all_entries();
-            for (int if_index = 0; if_index < N_IFACE_ON_BOARD; if_index++) {
-                make_response(if_index, RIP_MULTI_ADDR, entries);
-            }
+            multicast(get_all_entries());
             printf("30s Timer\n");
             last_time = time;
+            triggered = false;
+            triggered_timer = 0;
+        } else if (triggered && time - triggered_last > triggered_timer) {
+            auto entries = get_changed_entries();
+            multicast(entries);
+            for (auto &entry: entries) {
+                if (entry.metric == 16) update(false, entry);
+            }
+            triggered_last = time;
+            triggered_timer = rng() % 4000 + 1000;  // between 1s and 5s
+            triggered = false;
         }
 
         int mask = (1 << N_IFACE_ON_BOARD) - 1;
@@ -292,6 +344,8 @@ int main(int argc, char *argv[]) {
                 // not found
                 // optionally you can send ICMP Host Unreachable
                 // TODO: send request
+                multicast_request();
+                
                 printf("IP not found for %x\n", src_addr);
             }
         }
