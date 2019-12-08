@@ -37,14 +37,10 @@ static uint32_t get32(const uint8_t *val) { return ntohl(rev32(val)); }
 
 // using namespace std;
 
-enum rip_command_t {
-    REQUEST = 1,
-    RESPONSE = 2,
-};
-
 bool check_subnet(uint32_t mask) {
     mask = ntohl(mask);
     for (int i = 0; i < 32; i++) {
+        // mask 必须高位全 1，地位全 0
         if (mask >> i & 1) {
             for (int j = i + 1; j < 32; j++) {
                 if (!(mask >> j & 1)) return 0;

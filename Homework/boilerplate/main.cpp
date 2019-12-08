@@ -1,7 +1,10 @@
 #include <stdint.h>
 #include <stdio.h>
+#include <vector>
 #include <stdlib.h>
 #include <string.h>
+#include <algorithm>
+
 #include "rip.h"
 #include "router.h"
 #include "router_hal.h"
@@ -68,6 +71,7 @@ extern uint32_t assemble(const RipPacket *rip, uint8_t *buffer);
 
 // 通过计算得到 checksum
 extern uint16_t get_header_checksum(uint8_t *packet);
+extern std::vector<RoutingTableEntry> get_table_entries();
 
 static uint16_t rev16(const uint8_t *val) { return (uint16_t(val[0]) << 8) + val[1]; }
 static uint16_t get16(const uint8_t *val) { return ntohs(rev16(val)); }
@@ -117,8 +121,36 @@ int main(int argc, char *argv[]) {
             // What to do? 
             // TODO: send complete routing table to every interface
             // ref. RFC2453 3.8
+            auto entries = get_table_entries();
             for (int i = 0; i < N_IFACE_ON_BOARD; i++) {
-                
+                macaddr_t dst_mac;
+                if (HAL_ArpGetMacAddress(i, RIP_MULTI_ADDR, dst_mac) == 0) {
+                    for (unsigned j = 0; j < entries.size(); j += RIP_MAX_ENTRY) {
+                        output[0] = 0x45;       // ip: version, ihl
+                        output[8] = 1;          // ip: ttl
+                        output[9] = 0x11;       // ip: protocol = udp
+                        *(in_addr_t*)(output + 12) = addrs[i];          // ip: src addr
+                        *(in_addr_t*)(output + 16) = RIP_MULTI_ADDR;    // ip: dst addr
+                        *(uint16_t*)(output + 20) = htons(520);         // udp: src port = 520
+                        *(uint16_t*)(output + 22) = htons(520);         // udp: dst port = 520
+                        *(uint16_t*)(output + 24) = htons(8);           // udp: length = 8
+                        *(uint16_t*)(output + 26) = htons(0);           // udp: checksum = 0
+                        RipPacket rip;
+                        rip.command = rip_command_t::RESPONSE;
+                        rip.numEntries = std::min(size_t(RIP_MAX_ENTRY), entries.size() - j);
+                        for (unsigned k = 0; k < rip.numEntries; k++) {
+                            auto &rte = entries[j + k];
+                            auto &entry = rip.entries[k];
+                            entry.addr = rte.addr;
+                            entry.metric = rte.metric;
+                            
+                        }
+                        auto rip_len = assemble(&rip, output + 20 + 8);
+                        *(uint16_t*)(output + 2) = htons(20 + 8 + rip_len); // ip: total length
+                        *(uint16_t*)(output + 10) = htons(get_header_checksum(output)); // ip: checksum
+                        // HAL_SendIPPacket(entry.if_index, output, 20 + 8 + rip_len, dst_mac);
+                    }
+                }
             }
             printf("30s Timer\n");
             last_time = time;
@@ -143,7 +175,7 @@ int main(int argc, char *argv[]) {
 
         // 1. validate
         if (!validateIPChecksum(packet, res)) {
-        printf("Invalid IP Checksum\n");
+            printf("Invalid IP Checksum\n");
             continue;
         }
         in_addr_t src_addr, dst_addr;
@@ -161,6 +193,7 @@ int main(int argc, char *argv[]) {
             }
         }
         // TODO: Handle rip multicast address(224.0.0.9)?
+        if (dst_addr == RIP_MULTI_ADDR) dst_is_me = true;
 
         if (dst_is_me) {
             // 3a.1
@@ -176,6 +209,9 @@ int main(int argc, char *argv[]) {
                     // assemble
                     // IP
                     output[0] = 0x45;
+                    output[8]--;    // ttl
+                    // 互换源和目的 ip
+                    std::swap(*(in_addr_t*)(output + 12), *(in_addr_t*)(output + 16));
                     // ...
                     // UDP
                     // port = 520

@@ -3,29 +3,32 @@
 #include <iostream>
 #include <utility>
 #include <vector>
+#include <arpa/inet.h>
 
 #include "router.h"
-
-static uint32_t rev_bytes(const uint32_t &val) {
-    return (val & 0xff) << 24 | (val & 0xff00) << 8 | (val & 0xff0000) >> 8 |
-           (val & 0xff000000) >> 24;
-}
 
 struct RouterTable {
     struct node_t {
         node_t *ch[2];
-        uint32_t nexthop, if_index;
-        bool val;
+        RoutingTableEntry *entry;
 
-        node_t() {
-            ch[0] = ch[1] = nullptr;
-            val = 0;
+        node_t() { 
+            ch[0] = ch[1] = nullptr; 
+            entry = nullptr;
+        }
+
+        void set(const RoutingTableEntry &entry) { this->entry = new RoutingTableEntry(entry); }
+        bool has() const { return entry != nullptr; }
+        RoutingTableEntry get() const { return *entry; }
+        void remove() {
+            delete entry;
+            entry = nullptr;
         }
     };
     node_t *root = nullptr;
 
     void insert(const RoutingTableEntry &entry) {
-        auto addr = rev_bytes(entry.addr);
+        auto addr = ntohl(entry.addr);
         if (!root) root = new node_t;
         auto u = root;
         for (int i = 0; i < entry.len; i++) {
@@ -33,43 +36,41 @@ struct RouterTable {
             if (!v) v = new node_t;
             u = v;
         }
-        u->val = 1;
-        u->nexthop = entry.nexthop;
-        u->if_index = entry.if_index;
+        u->set(entry);
     }
 
     void remove(const RoutingTableEntry &entry) {
-        remove(root, 0, rev_bytes(entry.addr), entry.len);
+        remove(root, 0, ntohl(entry.addr), entry.len);
     }
 
     void remove(node_t *&u, int i, uint32_t addr, uint32_t len) {
         if (!u) return;
         if (i == len)
-            u->val = 0;
+            u->remove();
         else
             remove(u->ch[addr >> (31 - i) & 1], i + 1, addr, len);
-        if (!u->ch[0] && !u->ch[1] && !u->val) {
+        if (!u->ch[0] && !u->ch[1] && !u->has()) {
             delete u;
             u = nullptr;
         }
     }
 
     const node_t *query(uint32_t addr) const {
-        addr = rev_bytes(addr);
+        addr = ntohl(addr);
         if (!root) return nullptr;
         auto u = root;
         const node_t *ret = nullptr;
         for (int i = 31; i >= 0; i--) {
             u = u->ch[addr >> i & 1];
             if (!u) break;
-            if (u->val) ret = u;
+            if (u->has()) ret = u;
         }
         return ret;
     }
 
     void dfs(const node_t* x, uint32_t addr, uint32_t len, std::vector<RoutingTableEntry>& result) const {
         if (!x) return;
-        if (x->val) result.push_back(RoutingTableEntry{rev_bytes(addr << (32 - len)), len, x->if_index, x->nexthop});
+        if (x->has()) result.push_back(x->get());
         dfs(x->ch[0], addr << 1, len + 1, result);
         dfs(x->ch[1], addr << 1 | 1, len + 1, result);
     }
@@ -108,9 +109,14 @@ void update(bool insert, RoutingTableEntry entry) {
 bool query(uint32_t addr, uint32_t *nexthop, uint32_t *if_index) {
     auto node = table.query(addr);
     if (node) {
-        *nexthop = node->nexthop;
-        *if_index = node->if_index;
+        const auto &entry = node->get();
+        *nexthop = entry.nexthop;
+        *if_index = entry.if_index;
         return true;
     } else
         return false;
+}
+
+std::vector<RoutingTableEntry> get_table_entries() {
+    return table.get_all();
 }

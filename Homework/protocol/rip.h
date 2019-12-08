@@ -18,3 +18,8 @@ typedef struct {
   // we don't store 'zero', as it is always 0
   RipEntry entries[RIP_MAX_ENTRY];
 } RipPacket;
+
+enum rip_command_t {
+    REQUEST = 1,
+    RESPONSE = 2,
+};
