@@ -178,18 +178,12 @@ static void multicast_request() {
 
 std::mt19937 rng(time(0));
 
-
-
-
 int main(int argc, char *argv[]) {
     // 0a.
     int res = HAL_Init(1, addrs);
     if (res < 0) {
         return res;
     }
-
-    bool triggered = 0;
-    uint64_t triggered_last = 0, triggered_timer = 0;
 
     // 0b. Add direct routes
     // For example:
@@ -199,15 +193,16 @@ int main(int argc, char *argv[]) {
     // 10.0.3.0/24 if 3
     for (uint32_t i = 0; i < N_IFACE_ON_BOARD; i++) {
         RoutingTableEntry entry = {
-            .addr = addrs[i],  // big endian
-            .len = 24,         // small endian
-            .if_index = i,     // small endian
-            .nexthop = 0,       // big endian, means direct
-            .metric = 1
+            .addr = addrs[i] & 0x00FFFFFF, // big endian
+            .len = 24,        // small endian
+            .if_index = i,    // small endian
+            .nexthop = 0      // big endian, means direct
         };
         update(true, entry);
     }
 
+    bool triggered = 0;
+    uint64_t triggered_last = 0, triggered_timer = 0;
     uint64_t last_time = 0;
     while (1) {
         uint64_t time = HAL_GetTicks();
@@ -345,7 +340,6 @@ int main(int argc, char *argv[]) {
                 // optionally you can send ICMP Host Unreachable
                 // TODO: send request
                 multicast_request();
-                
                 printf("IP not found for %x\n", src_addr);
             }
         }
