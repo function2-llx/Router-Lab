@@ -1,0 +1,1 @@
+scp -r Homework HAL pi:~/Desktop/Router-Lab/
