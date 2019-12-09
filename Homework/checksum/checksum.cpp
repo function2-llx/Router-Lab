@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <cstdint>
 #include <iostream>
+#include <arpa/inet.h>
 
 static uint16_t big(uint8_t* val) { return (uint16_t(val[0]) << 8) + val[1]; }
 
@@ -11,25 +12,13 @@ uint16_t get_header_checksum(uint8_t *packet) {
     uint8_t IHL = packet[0] & 0xf;
     for (size_t i = 0; i < IHL * 4; i += 2) {
         if (i == 10) continue;
-        checksum += big(packet + i);
+        checksum += ntohs(*(uint16_t*)(packet + i));
     }
     while (checksum > 0xffff)
         checksum = (uint16_t(checksum) & 0xffff) + (checksum >> 16);
-    return ~checksum;
+    return htons(~checksum);
 }
 
 bool validateIPChecksum(uint8_t *packet, size_t len) {
-    using std::cerr;
-    using std::endl;
-    // uint32_t checksum = 0;
-    // uint8_t IHL = packet[0] & 0xf;
-    // for (size_t i = 0; i < IHL * 4; i += 2) {
-    //     if (i == 10) continue;
-    //     checksum += big(packet + i);
-    // }
-    // while (checksum > 0xffff)
-    //     checksum = (uint16_t(checksum) & 0xffff) + (checksum >> 16);
-    // uint16_t actual = ~big(packet + 10);
-    // return checksum == actual;
-    return big(packet + 10) == get_header_checksum(packet);
+    return *(uint16_t*)(packet + 10) == get_header_checksum(packet);
 }

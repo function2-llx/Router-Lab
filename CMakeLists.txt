@@ -9,6 +9,7 @@ set(BACKEND_VALUES "Linux" "Xilinx" "macOS" "stdio")
 set_property(CACHE BACKEND PROPERTY STRINGS ${BACKEND_VALUES})
 set(BACKEND "Linux")
 list(FIND BACKEND_VALUES ${BACKEND} BACKEND_INDEX)
+set(EXECUTABLE_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/bin)
 
 if(${BACKEND_INDEX} EQUAL -1)
     message(WARNING "Backend ${BACKEND} not supported, valid items are: ${BACKEND_VALUES}")

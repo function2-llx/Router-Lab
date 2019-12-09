@@ -17,7 +17,10 @@ struct RouterTable {
             entry = nullptr;
         }
 
-        void set(const RoutingTableEntry &entry) { this->entry = new RoutingTableEntry(entry); }
+        void set(const RoutingTableEntry &entry) {
+            delete this->entry;
+            this->entry = new RoutingTableEntry(entry); 
+        }
         bool has() const { return entry != nullptr; }
         const RoutingTableEntry& get() const { return *entry; }
         RoutingTableEntry& get() { return *entry; }
@@ -77,7 +80,7 @@ struct RouterTable {
         addr = ntohl(addr);
         mask = ntohl(mask);
         auto u = root;
-        for (int i = 31; i >= 0 && (mask >> i & 1); i--) {
+        for (int i = 31; u && (mask >> i & 1) && i >= 0; i--) {
             u = u->ch[addr >> i & 1];
         }
         return u;
@@ -109,6 +112,8 @@ struct RouterTable {
                 rte.flag = false;
             }
         }
+        dfs_changed(x->ch[0], result);
+        dfs_changed(x->ch[1], result);
     }
 
     std::vector<RoutingTableEntry> get_changed() {
@@ -136,30 +141,40 @@ static RouterTable table;
 */
 
 void update(bool insert, RoutingTableEntry entry) {
+    printf("enter update\n");
     if (insert) {
         table.insert(entry);
     } else {
         table.remove(entry);
     }
+    printf("update complete\n");
 }
 
 bool query(uint32_t addr, uint32_t *nexthop, uint32_t *if_index) {
+    printf("enter query\n");
     auto node = table.query(addr);
+    bool ret;
     if (node) {
         const auto &entry = node->get();
         *nexthop = entry.nexthop;
         *if_index = entry.if_index;
-        return true;
-    } else
-        return false;
+        ret = true;
+    } else {
+        ret = false;
+    }
+    printf("complete query\n");
+    return ret;
 }
 
 bool query(uint32_t addr, uint32_t mask, RoutingTableEntry& entry) {
+    printf("enter query\n");
     auto u = table.query(addr, mask);
-    if (u->has()) {
+    if (u && u->has()) {
         entry = u->get();
+        printf("complete query\n");
         return 1;
     } else {
+        printf("complete query(not found)\n");
         return 0;
     }
 }

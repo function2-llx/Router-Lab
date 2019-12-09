@@ -70,7 +70,7 @@ extern bool disassemble(const uint8_t *packet, uint32_t len, RipPacket *output);
  */
 extern uint32_t assemble(const RipPacket *rip, uint8_t *buffer);
 
-// 通过计算得到 checksum
+// 通过计算得到 checksum，大端序
 extern uint16_t get_header_checksum(uint8_t *packet);
 // 返回全部路由表项
 extern std::vector<RoutingTableEntry> get_all_entries();
@@ -95,13 +95,16 @@ static in_addr_t addrs[N_IFACE_ON_BOARD] = {0x0203a8c0, 0x0104a8c0, 0x0102000a,
 #include <assert.h>
 
 // 根据 len 返回大端序的掩码
-static uint32_t get_mask(int len) { return htons(((1 << len) - 1) << (32 - len)); }
+static uint32_t get_mask(int len) { 
+    return htonl(((1ll << len) - 1) << (32 - len)); 
+}
 // 根据 mask 返回小端序的 len
 static uint32_t get_len(uint32_t mask) {
     mask = ntohl(mask);
-    uint32_t len = 0;
-    while (mask >> (31 - len) & 1) len++;
-    return len;
+    for (int i = 31; i >= 0; i--) {
+        if (!(mask >> i & 1)) return 31 - i;
+    }
+    return 32;
 }
 
 // 224.0.0.9
@@ -114,13 +117,15 @@ static void make_response(int if_index, in_addr_t dst_addr, const std::vector<Ro
     macaddr_t dst_mac;
     if (HAL_ArpGetMacAddress(if_index, dst_addr, dst_mac) == 0) {
         output[0] = 0x45;                                   // ip: version, ihl
+        output[1] = 0;                                      // ip: TOS(DSCP/ECN)=0
+        *(uint16_t*)(output + 4) = 0;                       // ip: id = 0
+        *(uint16_t*)(output + 6) = 0;                       // ip: FLAGS/OFF=0
         output[8] = 1;                                      // ip: ttl
         output[9] = 0x11;                                   // ip: protocol = udp
         *(in_addr_t*)(output + 12) = addrs[if_index];       // ip: src addr
         *(in_addr_t*)(output + 16) = dst_addr;              // ip: dst addr
         *(uint16_t*)(output + 20) = RIP_PORT;               // udp: src port
         *(uint16_t*)(output + 22) = RIP_PORT;               // udp: dst port
-        *(uint16_t*)(output + 24) = htons(8);               // udp: length = 8
         *(uint16_t*)(output + 26) = htons(0);               // udp: checksum = 0
         for (unsigned i = 0; i < entries.size(); i += RIP_MAX_ENTRY) {
             RipPacket rip;
@@ -135,8 +140,9 @@ static void make_response(int if_index, in_addr_t dst_addr, const std::vector<Ro
                 entry.nexthop = rte.nexthop;
             }
             auto rip_len = assemble(&rip, output + 20 + 8);
-            *(uint16_t*)(output + 2) = htons(20 + 8 + rip_len); // ip: total length
-            *(uint16_t*)(output + 10) = htons(get_header_checksum(output)); // ip: checksum
+            *(uint16_t*)(output + 24) = htons(8 + rip_len);                     // udp: length = 8 + rip_len
+            *(uint16_t*)(output + 2) = htons(20 + 8 + rip_len);                 // ip: total length
+            *(uint16_t*)(output + 10) = get_header_checksum(output);            // ip: checksum
             HAL_SendIPPacket(if_index, output, 20 + 8 + rip_len, dst_mac);
         }
     }
@@ -144,6 +150,7 @@ static void make_response(int if_index, in_addr_t dst_addr, const std::vector<Ro
 
 // 组播发送路由表
 static void multicast(const std::vector<RoutingTableEntry>& entries) {
+    printf("multicast size: %lu\n", entries.size());
     for (int i = 0; i < N_IFACE_ON_BOARD; i++) {
         make_response(i, RIP_MULTI_ADDR, entries);
     }
@@ -158,17 +165,19 @@ static void multicast_request() {
         macaddr_t dst_mac;
         if (HAL_ArpGetMacAddress(if_index, RIP_MULTI_ADDR, dst_mac) == 0) {
             output[0] = 0x45;                                   // ip: version, ihl
-            output[8] = 1;                                      // ip: ttl
+            output[1] = 0;                                      // ip: TOS(DSCP/ECN)=0
+            *(uint16_t*)(output + 4) = 0;                       // ip: id = 0
+            *(uint16_t*)(output + 6) = 0;                       // ip: FLAGS/OFF=0
             output[9] = 0x11;                                   // ip: protocol = udp
             *(in_addr_t*)(output + 12) = addrs[if_index];       // ip: src addr
             *(in_addr_t*)(output + 16) = RIP_MULTI_ADDR;              // ip: dst addr
             *(uint16_t*)(output + 20) = RIP_PORT;               // udp: src port
             *(uint16_t*)(output + 22) = RIP_PORT;               // udp: dst port
-            *(uint16_t*)(output + 24) = htons(8);               // udp: length = 8
             *(uint16_t*)(output + 26) = htons(0);               // udp: checksum = 0
             auto rip_len = assemble(&rp, output + 20 + 8);
+            *(uint16_t*)(output + 24) = htons(8 + rip_len);                      // udp: length = 8
             *(uint16_t*)(output + 2) = htons(20 + 8 + rip_len);                 // ip: total length
-            *(uint16_t*)(output + 10) = htons(get_header_checksum(output));     // ip: checksum
+            *(uint16_t*)(output + 10) = get_header_checksum(output);     // ip: checksum
             HAL_SendIPPacket(if_index, output, 20 + 8 + rip_len, dst_mac);
         }
     }
@@ -199,18 +208,20 @@ int main(int argc, char *argv[]) {
     bool triggered = 0;
     uint64_t triggered_last = 0, triggered_timer = 0;
     uint64_t last_time = 0;
+    uint64_t regular_timer = 5;
     while (1) {
         uint64_t time = HAL_GetTicks();
-        if (time > last_time + 30 * 1000) {
+        if (time > last_time + regular_timer * 1000) {
             // What to do? 
             // TODO: send complete routing table to every interface
             // ref. RFC2453 3.8
             multicast(get_all_entries());
-            printf("30s Timer\n");
+            printf("regular %lus Timer\n", regular_timer);
             last_time = time;
             triggered = false;
             triggered_timer = 0;
         } else if (triggered && time - triggered_last > triggered_timer) {
+            printf("triggered udpate\n");
             auto entries = get_changed_entries();
             multicast(entries);
             for (auto &entry: entries) {
@@ -269,6 +280,7 @@ int main(int argc, char *argv[]) {
                     // 3a.3 request, ref. RFC2453 3.9.1
                     // only need to respond to whole table requests in the lab
                     make_response(if_index, src_addr, get_all_entries());
+                    printf("response to request\n");
                 } else {
                     // 3a.2 response, ref. RFC2453 3.9.2
                     // update routing table
@@ -277,28 +289,35 @@ int main(int argc, char *argv[]) {
                     // what is missing from RoutingTableEntry?
                     // TODO: use query and update
                     // triggered updates? ref. RFC2453 3.10.1
+                    printf("received response\n");
                     uint32_t nexthop, metric, addr;
                     for (int i = 0; i < rip.numEntries; i++) {
                         auto &re = rip.entries[i];
                         uint32_t new_metric = htonl(std::min(ntohl(re.metric) + 1, 16u));
+                        printf("new metric: %u\n", ntohl(new_metric));
                         RoutingTableEntry rte;
                         if (!query(re.addr, re.mask, rte)) {
                             // there is no point in adding a route which is unusable
-                            if (new_metric < 16) {
+                            if (ntohl(new_metric) < 16) {
+                                printf("insert new route table entry\n");
                                 rte.addr = re.addr;
                                 rte.len = get_len(re.mask);
+                                printf("new len: %d\n", rte.len);
                                 rte.if_index = if_index;
                                 rte.nexthop = src_addr;
                                 rte.metric = new_metric;
                                 rte.flag = true;
+                                triggered = true;
                                 update(true, rte);
                             }
                         } else {
                             if (rte.nexthop == src_addr && rte.metric != new_metric || rte.metric > new_metric) {
+                                printf("update route table entry\n");
                                 rte.metric = new_metric;
                                 rte.nexthop = src_addr;
                                 rte.if_index = if_index;
                                 rte.flag = true;
+                                triggered = true;
                                 update(true, rte);
                             }
                         }
@@ -321,10 +340,16 @@ int main(int argc, char *argv[]) {
                     // found
                     memcpy(output, packet, res);
                     // update ttl and checksum
-                    forward(output, res);
-                    // TODO: you might want to check ttl=0 case
-                    uint8_t ttl = output[8];
-                    if (ttl) HAL_SendIPPacket(dest_if, output, res, dest_mac);
+                    if (forward(output, res)) {
+                        // TODO: you might want to check ttl=0 case
+                        uint8_t ttl = output[8];
+                        if (ttl) {
+                            HAL_SendIPPacket(dest_if, output, res, dest_mac);
+                            printf("forward packet, src: %x, dst: %x\n", ntohl(src_addr), ntohl(dst_addr));
+                        } else {
+                            printf("ttl hit zero, drop packet\n");
+                        }
+                    }
                 } else {
                     // not found
                     // you can drop it
