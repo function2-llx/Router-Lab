@@ -149,10 +149,18 @@ static void make_response(int if_index, in_addr_t dst_addr, const std::vector<Ro
 }
 
 // 组播发送路由表
-static void multicast(const std::vector<RoutingTableEntry>& entries) {
+static void multicast(const std::vector<RoutingTableEntry>& entries, bool split_horizon = false) {
     printf("multicast size: %lu\n", entries.size());
     for (int i = 0; i < N_IFACE_ON_BOARD; i++) {
-        make_response(i, RIP_MULTI_ADDR, entries);
+        if (!split_horizon) {
+            make_response(i, RIP_MULTI_ADDR, entries);
+        } else {
+            std::vector<RoutingTableEntry> cur;
+            for (auto &entry: entries) {
+                if (entry.if_index != i) cur.push_back(entry);
+            }
+            make_response(i, RIP_MULTI_ADDR, cur);
+        }
     }
 }
 
