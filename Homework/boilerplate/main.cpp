@@ -208,7 +208,8 @@ int main(int argc, char *argv[]) {
             .addr = addrs[i] & 0x00FFFFFF, // big endian
             .len = 24,        // small endian
             .if_index = i,    // small endian
-            .nexthop = 0      // big endian, means direct
+            .nexthop = 0,      // big endian, means direct
+            .metric = htonl(1)
         };
         update(true, entry);
     }
@@ -225,7 +226,7 @@ int main(int argc, char *argv[]) {
             // ref. RFC2453 3.8
             auto all = get_all_entries();
             multicast(all, false);
-            printf("regular %lu s Timer\n", regular_timer);
+            printf("regular %d s Timer\n", int(regular_timer));
             last_time = time;
             triggered = false;
             triggered_timer = 0;
@@ -234,7 +235,7 @@ int main(int argc, char *argv[]) {
             auto entries = get_changed_entries();
             multicast(entries, true);
             for (auto &entry: entries) {
-                if (entry.metric == 16) update(false, entry);
+                if (ntohl(entry.metric) == 16) update(false, entry);
             }
             triggered_last = time;
             triggered_timer = rng() % 4000 + 1000;  // between 1s and 5s
