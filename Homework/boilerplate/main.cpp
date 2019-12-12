@@ -149,10 +149,18 @@ static void make_response(int if_index, in_addr_t dst_addr, const std::vector<Ro
 }
 
 // 组播发送路由表
-static void multicast(const std::vector<RoutingTableEntry>& entries) {
+static void multicast(const std::vector<RoutingTableEntry>& entries, bool update) {
     printf("multicast size: %lu\n", entries.size());
     for (int i = 0; i < N_IFACE_ON_BOARD; i++) {
-        make_response(i, RIP_MULTI_ADDR, entries);
+        if (!update) {
+            make_response(i, RIP_MULTI_ADDR, entries);
+        } else {
+            std::vector<RoutingTableEntry> cur;
+            for (auto &entry: entries) {
+                if (entry.if_index != i) cur.push_back(entry);
+                make_response(i, RIP_MULTI_ADDR, cur);
+            }
+        }
     }
 }
 
@@ -215,15 +223,16 @@ int main(int argc, char *argv[]) {
             // What to do? 
             // TODO: send complete routing table to every interface
             // ref. RFC2453 3.8
-            multicast(get_all_entries());
-            printf("regular %lus Timer\n", regular_timer);
+            auto all = get_all_entries();
+            multicast(all, false);
+            printf("regular %lu s Timer\n", regular_timer);
             last_time = time;
             triggered = false;
             triggered_timer = 0;
         } else if (triggered && time - triggered_last > triggered_timer) {
             printf("triggered udpate\n");
             auto entries = get_changed_entries();
-            multicast(entries);
+            multicast(entries, true);
             for (auto &entry: entries) {
                 if (entry.metric == 16) update(false, entry);
             }
@@ -345,9 +354,9 @@ int main(int argc, char *argv[]) {
                         uint8_t ttl = output[8];
                         if (ttl) {
                             HAL_SendIPPacket(dest_if, output, res, dest_mac);
-                            printf("forward packet, src: %x, dst: %x\n", ntohl(src_addr), ntohl(dst_addr));
+                            // printf("forward packet, src: %x, dst: %x\n", ntohl(src_addr), ntohl(dst_addr));
                         } else {
-                            printf("ttl hit zero, drop packet\n");
+                            // printf("ttl hit zero, drop packet\n");
                         }
                     }
                 } else {
