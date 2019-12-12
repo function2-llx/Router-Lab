@@ -321,7 +321,7 @@ int main(int argc, char *argv[]) {
                                 update(true, rte);
                             }
                         } else {
-                            if (rte.nexthop == src_addr && rte.metric != new_metric || rte.metric > new_metric) {
+                            if (rte.nexthop == src_addr && rte.metric != new_metric || ntohl(rte.metric) > ntohl(new_metric)) {
                                 printf("update route table entry\n");
                                 rte.metric = new_metric;
                                 rte.nexthop = src_addr;
