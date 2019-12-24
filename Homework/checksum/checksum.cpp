@@ -5,7 +5,7 @@
 #include <iostream>
 #include <arpa/inet.h>
 
-static uint16_t big(uint8_t* val) { return (uint16_t(val[0]) << 8) + val[1]; }
+// static uint16_t big(uint8_t* val) { return (uint16_t(val[0]) << 8) + val[1]; }
 
 uint16_t get_header_checksum(uint8_t *packet) {
     uint32_t checksum = 0;

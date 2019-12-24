@@ -237,7 +237,7 @@ int main(int argc, char *argv[]) {
             auto all = get_all_entries();
             printf("route table(addr, len, nexthop, metric):\n");
             for (auto &e: all) {
-                printf("%s %x %s %x\n", ip_string(e.addr).c_str(), e.len, ip_string(e.nexthop).c_str(), ntohl(e.metric));
+                printf("%s %d %s %d\n", ip_string(e.addr).c_str(), e.len, ip_string(e.nexthop).c_str(), ntohl(e.metric));
             }
             multicast(all);
             printf("regular %d s Timer\n", int(regular_timer));
@@ -349,6 +349,8 @@ int main(int argc, char *argv[]) {
                         }
                     }
                 }
+            } else {
+                printf("not rip\n");
             }
         } else {
             // 3b.1 dst is not me
@@ -356,6 +358,7 @@ int main(int argc, char *argv[]) {
             // beware of endianness
             uint32_t nexthop, dest_if;
             if (query(dst_addr, &nexthop, &dest_if)) {
+                // printf("dst: %s, nexthop: %s, dest if: %d\n", ip_string(dst_addr).c_str(), ip_string(nexthop).c_str(), dest_if);
                 // found
                 // direct routing
                 if (nexthop == 0) {
@@ -370,6 +373,7 @@ int main(int argc, char *argv[]) {
                         // TODO: you might want to check ttl=0 case
                         uint8_t ttl = output[8];
                         if (ttl) {
+                            // printf("forward to %s\n", ip_string(dst_addr).c_str());
                             HAL_SendIPPacket(dest_if, output, res, dest_mac);
                             // printf("forward packet, src: %x, dst: %x\n", ntohl(src_addr), ntohl(dst_addr));
                         } else {
