@@ -149,17 +149,17 @@ static void make_response(int if_index, in_addr_t dst_addr, const std::vector<Ro
 }
 
 // 组播发送路由表
-static void multicast(const std::vector<RoutingTableEntry>& entries, bool update) {
-    printf("multicast size: %lu\n", entries.size());
+static void multicast(const std::vector<RoutingTableEntry>& entries) {
     for (int i = 0; i < N_IFACE_ON_BOARD; i++) {
         if (!update) {
             make_response(i, RIP_MULTI_ADDR, entries);
         } else {
             std::vector<RoutingTableEntry> cur;
             for (auto &entry: entries) {
-                if (entry.if_index != i) cur.push_back(entry);
-                make_response(i, RIP_MULTI_ADDR, cur);
+                cur.push_back(entry);
+                if (i == entry.if_index) cur.back().metric = htonl(16);
             }
+            make_response(i, RIP_MULTI_ADDR, cur);
         }
     }
 }
@@ -168,7 +168,7 @@ static void multicast_request() {
     RipPacket rp;
     rp.command = rip_command_t::REQUEST;
     rp.numEntries = 1;
-    rp.entries[0].metric = 16;
+    rp.entries[0].metric = htonl(16);
     for (int if_index = 0; if_index < N_IFACE_ON_BOARD; if_index++) {
         macaddr_t dst_mac;
         if (HAL_ArpGetMacAddress(if_index, RIP_MULTI_ADDR, dst_mac) == 0) {
@@ -192,6 +192,16 @@ static void multicast_request() {
 }
 
 #include <random>
+#include <string>
+
+std::string ip_string(uint32_t addr) {
+    std::string ret;
+    for (int i = 0; i < 3; i++) {
+        ret += std::to_string(addr & 0xff) + ".";
+        addr >>= 8;
+    }
+    return ret + std::to_string(addr);
+}
 
 std::mt19937 rng(time(0));
 
@@ -225,7 +235,11 @@ int main(int argc, char *argv[]) {
             // TODO: send complete routing table to every interface
             // ref. RFC2453 3.8
             auto all = get_all_entries();
-            multicast(all, false);
+            printf("route table(addr, len, nexthop, metric):\n");
+            for (auto &e: all) {
+                printf("%s %x %s %x\n", ip_string(e.addr).c_str(), e.len, ip_string(e.nexthop).c_str(), ntohl(e.metric));
+            }
+            multicast(all);
             printf("regular %d s Timer\n", int(regular_timer));
             last_time = time;
             triggered = false;
@@ -233,7 +247,7 @@ int main(int argc, char *argv[]) {
         } else if (triggered && time - triggered_last > triggered_timer) {
             printf("triggered udpate\n");
             auto entries = get_changed_entries();
-            multicast(entries, true);
+            multicast(entries);
             for (auto &entry: entries) {
                 if (ntohl(entry.metric) == 16) update(false, entry);
             }
@@ -303,16 +317,18 @@ int main(int argc, char *argv[]) {
                     uint32_t nexthop, metric, addr;
                     for (int i = 0; i < rip.numEntries; i++) {
                         auto &re = rip.entries[i];
+                        if (re.addr == 0) re.addr = src_addr;
+                        if (re.nexthop == 0) re.nexthop = src_addr;
                         uint32_t new_metric = htonl(std::min(ntohl(re.metric) + 1, 16u));
-                        printf("new metric: %u\n", ntohl(new_metric));
+                        // printf("new metric: %u\n", ntohl(new_metric));
                         RoutingTableEntry rte;
                         if (!query(re.addr, re.mask, rte)) {
                             // there is no point in adding a route which is unusable
                             if (ntohl(new_metric) < 16) {
-                                printf("insert new route table entry\n");
+                                printf("insert new route table entry, addr: %s, mask: %s\n", ip_string(re.addr).c_str(), ip_string(mask).c_str());
+                                if (re.mask == 0) re.mask = 0xffffffff;
                                 rte.addr = re.addr;
                                 rte.len = get_len(re.mask);
-                                printf("new len: %d\n", rte.len);
                                 rte.if_index = if_index;
                                 rte.nexthop = src_addr;
                                 rte.metric = new_metric;
@@ -322,7 +338,7 @@ int main(int argc, char *argv[]) {
                             }
                         } else {
                             if (rte.nexthop == src_addr && rte.metric != new_metric || ntohl(rte.metric) > ntohl(new_metric)) {
-                                printf("update route table entry\n");
+                                printf("update route table entry, addr: %s, metric: %d\n", ip_string(rte.addr).c_str(), int(ntohl(new_metric)));
                                 rte.metric = new_metric;
                                 rte.nexthop = src_addr;
                                 rte.if_index = if_index;

@@ -4,6 +4,8 @@
 const char *interfaces[N_IFACE_ON_BOARD] = {
     "eth1",
     "eth2",
+    // "r1-r2-r2",
+    // "r2-r3-r2",
     "eth3",
     "eth4",
 };
