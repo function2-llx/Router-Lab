@@ -207,7 +207,7 @@ std::mt19937 rng(time(0));
 
 int main(int argc, char *argv[]) {
     // 0a.
-    int res = HAL_Init(1, addrs);
+    int res = HAL_Init(0, addrs);
     if (res < 0) {
         return res;
     }
@@ -227,7 +227,7 @@ int main(int argc, char *argv[]) {
     bool triggered = 0;
     uint64_t triggered_last = 0, triggered_timer = 0;
     uint64_t last_time = 0;
-    uint64_t regular_timer = 5;
+    uint64_t regular_timer = 10;
     while (1) {
         uint64_t time = HAL_GetTicks();
         if (time > last_time + regular_timer * 1000) {
@@ -236,7 +236,9 @@ int main(int argc, char *argv[]) {
             // ref. RFC2453 3.8
             auto all = get_all_entries();
             printf("route table(addr, len, nexthop, metric):\n");
-            for (auto &e: all) {
+            printf("tot: %u\n", all.size());
+            for (int i = 0; i < std::min(12, int(all.size())); i++) {
+                auto &e = all[i];
                 printf("%s %d %s %d\n", ip_string(e.addr).c_str(), e.len, ip_string(e.nexthop).c_str(), ntohl(e.metric));
             }
             multicast(all);
@@ -369,16 +371,12 @@ int main(int argc, char *argv[]) {
                     // found
                     memcpy(output, packet, res);
                     // update ttl and checksum
-                    if (forward(output, res)) {
+                    uint8_t ttl = output[8];
+                    // printf("forward to %s\n", ip_string(dst_addr).c_str());
+                    if (ttl > 1 && forward(output, res)) {
                         // TODO: you might want to check ttl=0 case
-                        uint8_t ttl = output[8];
-                        if (ttl) {
-                            // printf("forward to %s\n", ip_string(dst_addr).c_str());
-                            HAL_SendIPPacket(dest_if, output, res, dest_mac);
-                            // printf("forward packet, src: %x, dst: %x\n", ntohl(src_addr), ntohl(dst_addr));
-                        } else {
-                            // printf("ttl hit zero, drop packet\n");
-                        }
+                        HAL_SendIPPacket(dest_if, output, res, dest_mac);
+                        // printf("forward packet, src: %x, dst: %x\n", ntohl(src_addr), ntohl(dst_addr));
                     }
                 } else {
                     // not found
