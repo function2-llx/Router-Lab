@@ -141,17 +141,14 @@ static RouterTable table;
 */
 
 void update(bool insert, RoutingTableEntry entry) {
-    printf("enter update\n");
     if (insert) {
         table.insert(entry);
     } else {
         table.remove(entry);
     }
-    printf("update complete\n");
 }
 
 bool query(uint32_t addr, uint32_t *nexthop, uint32_t *if_index) {
-    printf("enter query\n");
     auto node = table.query(addr);
     bool ret;
     if (node) {
@@ -162,19 +159,15 @@ bool query(uint32_t addr, uint32_t *nexthop, uint32_t *if_index) {
     } else {
         ret = false;
     }
-    printf("complete query\n");
     return ret;
 }
 
 bool query(uint32_t addr, uint32_t mask, RoutingTableEntry& entry) {
-    printf("enter query\n");
     auto u = table.query(addr, mask);
     if (u && u->has()) {
         entry = u->get();
-        printf("complete query\n");
         return 1;
     } else {
-        printf("complete query(not found)\n");
         return 0;
     }
 }
